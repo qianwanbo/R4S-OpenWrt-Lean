@@ -1,0 +1,43 @@
+#!/bin/sh
+
+uci set luci.main.lang=zh_cn
+uci commit luci
+
+uci set system.@system[0].hostname='NanoPi-R4S'
+uci set system.@system[0].timezone=CST-8
+uci set system.@system[0].zonename=Asia/Shanghai
+uci commit system
+
+uci set openclash.config.core_version='linux-armv8'
+uci set openclash.config.en_mode='fake-ip'
+uci set openclash.config.operation_mode='fake-ip'
+uci set openclash.config.log_level='info'
+uci commit openclash
+
+ln -sf /sbin/ip /usr/bin/ip
+
+sed -i 's#http://downloads.openwrt.org#https://mirrors.cloud.tencent.com/lede#g' /etc/opkg/distfeeds.conf
+
+sed -i "s/# //g" /etc/opkg/distfeeds.conf
+sed -i '/openwrt_luci/ { s/snapshots/releases\/18.06.8/g; }'  /etc/opkg/distfeeds.conf
+
+sed -i '/REDIRECT --to-ports 53/d' /etc/firewall.user
+echo "iptables -t nat -A PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 53" >> /etc/firewall.user
+echo "iptables -t nat -A PREROUTING -p tcp --dport 53 -j REDIRECT --to-ports 53" >> /etc/firewall.user
+
+sed -i '/DISTRIB_REVISION/d' /etc/openwrt_release
+echo "DISTRIB_REVISION='R20.10.20'" >> /etc/openwrt_release
+sed -i '/DISTRIB_DESCRIPTION/d' /etc/openwrt_release
+echo "DISTRIB_DESCRIPTION='OpenWrt '" >> /etc/openwrt_release
+
+sed -i '/log-facility/d' /etc/dnsmasq.conf
+echo "log-facility=/dev/null" >> /etc/dnsmasq.conf
+
+sed -i 's/cbi.submit\"] = true/cbi.submit\"] = \"1\"/g' /usr/lib/lua/luci/dispatcher.lua
+
+echo 'hsts=0' > /root/.wgetrc
+
+rm -rf /tmp/luci-modulecache/
+rm -f /tmp/luci-indexcache
+
+exit 0
