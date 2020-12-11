@@ -1,0 +1,119 @@
+name: R4S-OpenWrt-Lean
+
+on:
+  push:
+    branches: 
+      - master
+    paths:
+      - '.github/workflows/**'
+      - 'PATCH/**'
+      - 'SCRIPTS/**'
+      - 'SEED/**'
+  watch:
+    types: [started]
+
+jobs:
+  build:
+    runs-on: ubuntu-18.04
+    if: github.event.repository.owner.id == github.event.sender.id
+    
+    steps:
+    - name: Clone Repository
+      uses: actions/checkout@v1
+
+    - name: Show CPU Model and Free Space
+      run: |
+        echo -e "Total CPU cores\t: $(nproc)"
+        cat /proc/cpuinfo | grep 'model name'
+        git clone https://github.com/eembc/coremark.git
+        cd coremark && make > '/dev/null' && ./coremark.exe
+        free -h
+    - name: Init build dependencies
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        docker rmi $(docker images -q)
+        sudo swapoff -a
+        sudo rm -f /swapfile
+        sudo -E apt-get remove -y --purge azure-cli ghc zulu* hhvm llvm* firefox google* dotnet* powershell openjdk* mysql* php*
+        sudo -E apt-get update -y
+        sudo -E apt-get install -y build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev libz-dev patch python3 python2.7 unzip zlib1g-dev lib32gcc1 libc6-dev-i386 subversion flex uglifyjs git-core gcc-multilib p7zip p7zip-full subversion msmtp libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint device-tree-compiler g++-multilib antlr3 gperf wget curl swig rsync
+        wget -O - https://raw.githubusercontent.com/friendlyarm/build-env-on-ubuntu-bionic/master/install.sh | bash
+        sudo -E apt-get autoremove -y --purge
+        sudo -E apt-get clean -y
+        sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php
+        sudo rm -rf "/usr/local/share/boost"
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+    - name: Prepare Source
+      run: |
+        git clone https://github.com/coolsnowwolf/lede.git openwrt
+        cd ./openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        cp -r ../SCRIPTS/* ./
+        /bin/bash my_prepare_package.sh
+    - name: Make Config
+      run: |
+        cd ./openwrt
+        mv ../SEED/config.seed .config
+        make defconfig
+        chmod -R 755 ./
+    - name: Make Download
+      run: |
+        df -h
+        cd ./openwrt
+        make download -j10
+    - name: Compile Openwrt
+      run: |
+        df -h
+        cd ./openwrt
+        let make_process=$(nproc)+1
+        make -j${make_process} V=s || make -j${make_process} V=s || make -j1 V=s
+    - name: Cleaning
+      run: |
+        mkdir ./artifacts/
+        cd ./openwrt/bin/targets/rockchip/armv8
+        gzip -d *.gz && exit 0
+        gzip *.img
+        rm -rf ./packages/
+        mv * ../../../../../artifacts/
+        cd ../../../../../artifacts/
+        zip artifacts.zip *
+        mv artifacts.zip ..
+    - name: Assemble Artifact
+      id: assemble_artifact
+      env:
+        TZ: Asia/Shanghai
+      run: |
+        time=$(date +%Y%m%d%H%M)
+        release_tag=$time
+        release_name="R4S-OpenWrt-Lean-$time"
+        echo "##[set-output name=release_name;]$release_name"
+        echo "##[set-output name=release_tag;]$release_tag"
+    - name: Upload Artifact
+      uses: actions/upload-artifact@main
+      with:
+        name: ${{ steps.assemble_artifact.outputs.release_name }}
+        path: ./artifacts
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.assemble_artifact.outputs.release_tag }}
+        release_name:  ${{ steps.assemble_artifact.outputs.release_name }}
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Asset
+      id: upload-release-asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./artifacts.zip
+        asset_name: ${{ steps.assemble_artifact.outputs.release_name }}.zip
+        asset_content_type: application/zip
